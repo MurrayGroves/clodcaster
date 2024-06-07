@@ -9,13 +9,17 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Clodcaster;
+using Clodcaster.Modules;
+using Discord.Audio;
 
 namespace Clodcaster;
+
 
 public class Program
 {
     private static IConfiguration _configuration;
     private static IServiceProvider _services;
+
 
     private static readonly DiscordSocketConfig _socketConfig = new()
     {
@@ -29,6 +33,8 @@ public class Program
 
     public static async Task Main(string[] args)
     {
+        var recorder = new RecorderService();
+        
         _configuration = new ConfigurationBuilder()
             .AddEnvironmentVariables(prefix: "DC_")
             .AddJsonFile("appsettings.json", optional: true)
@@ -37,6 +43,7 @@ public class Program
         _services = new ServiceCollection()
             .AddSingleton(_configuration)
             .AddSingleton(_socketConfig)
+            .AddSingleton(recorder)
             .AddSingleton<DiscordSocketClient>()
             .AddSingleton(x => new InteractionService(x.GetRequiredService<DiscordSocketClient>(), _interactionServiceConfig))
             .AddSingleton<InteractionHandler>()
@@ -53,6 +60,8 @@ public class Program
         // Bot token can be provided from the Configuration object we set up earlier
         await client.LoginAsync(TokenType.Bot, _configuration["token"]);
         await client.StartAsync();
+        
+        System.IO.Directory.CreateDirectory("Recordings/Fragments");
 
         // Never quit the program until manually forced to.
         await Task.Delay(Timeout.Infinite);
@@ -61,6 +70,27 @@ public class Program
     private static Task LogAsync(LogMessage message)
     {
         Console.WriteLine(message.ToString());
+        return Task.CompletedTask;
+    }
+    
+    private static Task UserVoiceStateUpdated(SocketUser user, SocketVoiceState oldState, SocketVoiceState newState)
+    {
+        if (oldState.VoiceChannel == null && newState.VoiceChannel != null)
+        {
+            // User joined a voice channel
+            Console.WriteLine($"{user.Username} joined {newState.VoiceChannel.Name}");
+        }
+        else if (oldState.VoiceChannel != null && newState.VoiceChannel == null)
+        {
+            // User left a voice channel
+            Console.WriteLine($"{user.Username} left {oldState.VoiceChannel.Name}");
+            
+        }
+        else if (oldState.VoiceChannel != null && newState.VoiceChannel != null)
+        {
+            // User switched voice channels
+            Console.WriteLine($"{user.Username} switched from {oldState.VoiceChannel.Name} to {newState.VoiceChannel.Name}");
+        }
         return Task.CompletedTask;
     }
 }
