@@ -76,32 +76,26 @@ public class RecorderService
             var buffer = new byte[3840];
             Console.WriteLine("Starting audio stream");
             
-            // Spawn new task to output ffmpeg output
+            // Spawn new task to print ffmpeg stdout
             Task.Run(async () =>
             {
                 var ffmpegBuffer = new byte[3840];
                 while (await (ffmpeg.StandardOutput.BaseStream.ReadAsync(buffer, 0, buffer.Length, cts.Token)) > 0)
                 {
-                    Console.WriteLine("Output Bytes available");
                     await Console.Out.WriteAsync(System.Text.Encoding.Default.GetString(ffmpegBuffer));
                     await Console.Out.FlushAsync();
-                    Console.WriteLine("Output Bytes written");
                 }
-                Console.WriteLine("No output bytes available");
             });
             
-            // Spawn new task to output ffmpeg output
+            // Spawn new task to print ffmpeg stderr
             Task.Run(async () =>
             {
                 var ffmpegBuffer = new byte[3840];
                 while (await (ffmpeg.StandardError.BaseStream.ReadAsync(buffer, 0, buffer.Length, cts.Token)) > 0)
                 {
-                    Console.WriteLine("Output Bytes available");
                     await Console.Out.WriteAsync(System.Text.Encoding.Default.GetString(ffmpegBuffer));
                     await Console.Out.FlushAsync();
-                    Console.WriteLine("Output Bytes written");
                 }
-                Console.WriteLine("No output bytes available");
             });
 
             Task.Run(async () =>
@@ -110,28 +104,29 @@ public class RecorderService
                 {
                     if (cts.Token.IsCancellationRequested)
                     {
-                        Console.WriteLine("Cancelling stream");
+                        await ffmpegOutStdinStream.FlushAsync();
                         ffmpegOutStdinStream.Close();
                         break;
                     }
-                    await Task.Delay(1000);
+                    await Task.Delay(100);
                 }
             });
 
             while (await (userAudioStream.ReadAsync(buffer, 0, buffer.Length, cts.Token)) > 0)
             {
-                Console.WriteLine("Bytes available");
                 await ffmpegOutStdinStream.WriteAsync(buffer, 0, buffer.Length);
                 await ffmpegOutStdinStream.FlushAsync();
-                Console.WriteLine("Bytes written");
             }
-            Console.WriteLine("No bytes available");
             cts.Dispose();
         }
         catch (Exception e)
         {
+            if (cts.Token.IsCancellationRequested)
+            {
+                return;
+            }
+            
             Console.WriteLine("Error in audio stream");
-            Console.Out.Flush();
             Console.WriteLine(e);
             Console.WriteLine(ffmpeg.HasExited);
             Console.WriteLine(ffmpeg.ExitCode);
@@ -142,10 +137,10 @@ public class RecorderService
         finally
         {
             Console.WriteLine("Closing ffmpeg stream");
-            Console.Out.Flush();
             ffmpegOutStdinStream.Close();
             ffmpeg.Close();
             _streams.Remove(user);
+            _ffmpegProcesses.Remove(user);
             Console.WriteLine("Closed ffmpeg stream");
         }
     }
@@ -165,21 +160,13 @@ public class RecorderService
         // Add the end time to the fragment
         _fragments[user].Last().End = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeMilliseconds();
         Console.WriteLine("Added end time to fragment for " + user.DisplayName);
-
-        Console.WriteLine(_ffmpegProcesses[user].HasExited);
-        while (!_ffmpegProcesses[user].HasExited)
+        
+        while (_ffmpegProcesses.ContainsKey(user) && !_ffmpegProcesses[user].HasExited)
         {
-            Console.WriteLine("Waiting for FFMPEG to exit");
-            Console.WriteLine(_ffmpegProcesses[user].StandardOutput.ReadToEnd());
+            await Task.Delay(100);
         }
         
-        // Remove the FFMPEG process
-        _ffmpegProcesses[user].Close();
-        
         Console.WriteLine("Stopped recording for " + user.DisplayName);
-        
-        _ffmpegProcesses.Remove(user);
-        
     }
 
     public async Task StopRecordings()
@@ -243,8 +230,13 @@ public class RecorderService
             Console.WriteLine(ffmpegConcat.HasExited);
             Console.WriteLine(ffmpegConcat.ExitCode);
             Console.WriteLine(ffmpegConcat.StandardError.ReadToEnd());
-            Console.WriteLine(ffmpegConcat.StandardOutput.ReadToEnd());
         }
+        
+        _fragments = new Dictionary<IGuildUser, List<AudioFragment>>();
+        _ffmpegProcesses = new Dictionary<IGuildUser, Process>();
+        _cancellationTokens = new Dictionary<IGuildUser, CancellationTokenSource>();
+        _streams = new Dictionary<IGuildUser, AudioStream>();
+        _killingStream = null;
     }
     
     public void SetCurrentChannel(IVoiceChannel channel)

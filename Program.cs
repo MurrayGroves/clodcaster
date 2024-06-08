@@ -52,6 +52,29 @@ public class Program
         var client = _services.GetRequiredService<DiscordSocketClient>();
 
         client.Log += LogAsync;
+        client.UserVoiceStateUpdated += async (user, oldState, newState) =>
+        {
+            if (user.IsBot)
+            {
+                return;
+            }
+            
+            // If the user was in the recording channel and left, stop recording them
+            if (recorder.GetCurrentChannel() != null && oldState.VoiceChannel == recorder.GetCurrentChannel() && newState.VoiceChannel != recorder.GetCurrentChannel())
+            {
+                Console.WriteLine($"{(user as IGuildUser).DisplayName} left the recording channel. Stopping recording.");
+                // Don't await this, we don't want to block the event handler
+                recorder.StopRecording(user as IGuildUser);
+            }
+            
+            // If the user joined the recording channel, start recording them
+            if (recorder.GetCurrentChannel() != null && oldState.VoiceChannel != recorder.GetCurrentChannel() && newState.VoiceChannel == recorder.GetCurrentChannel())
+            {
+                Console.WriteLine($"{(user as IGuildUser).DisplayName} joined the recording channel. Starting recording.");
+                // Don't await this, we don't want to block the event handler
+                recorder.StartRecording(user as IGuildUser);
+            }
+        };
 
         // Here we can initialize the service that will register and execute our commands
         await _services.GetRequiredService<InteractionHandler>()
@@ -61,7 +84,7 @@ public class Program
         await client.LoginAsync(TokenType.Bot, _configuration["token"]);
         await client.StartAsync();
         
-        System.IO.Directory.CreateDirectory("Recordings/Fragments");
+        Directory.CreateDirectory("Recordings/Fragments");
 
         // Never quit the program until manually forced to.
         await Task.Delay(Timeout.Infinite);
@@ -70,27 +93,6 @@ public class Program
     private static Task LogAsync(LogMessage message)
     {
         Console.WriteLine(message.ToString());
-        return Task.CompletedTask;
-    }
-    
-    private static Task UserVoiceStateUpdated(SocketUser user, SocketVoiceState oldState, SocketVoiceState newState)
-    {
-        if (oldState.VoiceChannel == null && newState.VoiceChannel != null)
-        {
-            // User joined a voice channel
-            Console.WriteLine($"{user.Username} joined {newState.VoiceChannel.Name}");
-        }
-        else if (oldState.VoiceChannel != null && newState.VoiceChannel == null)
-        {
-            // User left a voice channel
-            Console.WriteLine($"{user.Username} left {oldState.VoiceChannel.Name}");
-            
-        }
-        else if (oldState.VoiceChannel != null && newState.VoiceChannel != null)
-        {
-            // User switched voice channels
-            Console.WriteLine($"{user.Username} switched from {oldState.VoiceChannel.Name} to {newState.VoiceChannel.Name}");
-        }
         return Task.CompletedTask;
     }
 }
