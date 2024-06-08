@@ -227,11 +227,44 @@ public class RecorderService
             }) ?? throw new InvalidOperationException();
             
             await ffmpegConcat.WaitForExitAsync();
-            Console.WriteLine(ffmpegConcat.HasExited);
-            Console.WriteLine(ffmpegConcat.ExitCode);
-            Console.WriteLine(ffmpegConcat.StandardError.ReadToEnd());
+            if (ffmpegConcat.ExitCode != 0)
+            {
+                Console.WriteLine(await ffmpegConcat.StandardError.ReadToEndAsync());
+            }
+        }
+
+        var arguments = "";
+        foreach (var user in _fragments.Keys)
+        {
+            arguments += $"-i \"Recordings/{user.DisplayName}-{earliestStart}.wav\" ";
+        }
+
+        for (var i=0; i<_fragments.Keys.Count; i++)
+        {
+            arguments += $"-map {i}";
+        }
+
+        var x = 0;
+        foreach (var user in _fragments.Keys)
+        {
+            arguments += $" -metadata:s:a:{x} title=\"{user.DisplayName}\"";
+            x++;
         }
         
+        var ffmpegMix = Process.Start(new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = $"{arguments} -c copy \"Recordings/{earliestStart}.mkv\"",
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }) ?? throw new InvalidOperationException();
+        
+        await ffmpegMix.WaitForExitAsync();
+        Console.WriteLine(await ffmpegMix.StandardError.ReadToEndAsync());
+        
+        Console.WriteLine("Stopped all recordings");
         _fragments = new Dictionary<IGuildUser, List<AudioFragment>>();
         _ffmpegProcesses = new Dictionary<IGuildUser, Process>();
         _cancellationTokens = new Dictionary<IGuildUser, CancellationTokenSource>();
